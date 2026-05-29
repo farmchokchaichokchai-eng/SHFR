@@ -862,24 +862,35 @@ function tplRepairForm(){return `
       <label class="fl">ประเภทงาน <span style="color:var(--red-500)">*</span></label>
       <select class="fs" id="rf-type">
         <option value="">-- เลือกประเภท --</option>
-        <option>ไฟฟ้า</option><option>ประปา</option><option>IT / คอมพิวเตอร์</option><option>โครงสร้างอาคาร</option><option>อื่นๆ</option>
+        <option>ไฟฟ้า</option>
+        <option>ประปา</option>
+        <option>โครงสร้างอาคาร</option>
+        <option>อื่นๆ</option>
       </select>
     </div>
     <div>
-      <label class="fl">อาคาร <span style="color:var(--red-500)">*</span></label>
+      <label class="fl">ห้อง / สถานที่ <span style="color:var(--red-500)">*</span></label>
       <select class="fs" id="rf-building">
-        <option value="">-- เลือกอาคาร --</option>
-        <option>อาคาร 1</option><option>อาคาร 2</option><option>อาคาร 3</option><option>โรงยิม</option><option>อาคารอำนวยการ</option>
+        <option value="">-- เลือกห้อง --</option>
+        <option>ห้อง A</option>
+        <option>ห้อง K</option>
+        <option>ห้อง O</option>
+        <option>ห้อง B</option>
+        <option>แคชเชียร์ ห้อง A</option>
+        <option>แคชเชียร์ ห้อง K</option>
+        <option>แคชเชียร์ ห้อง O</option>
+        <option>แคชเชียร์ ห้อง B</option>
+        <option>อื่นๆ</option>
       </select>
     </div>
   </div>
   <div class="fg">
-    <label class="fl">สถานที่ / ห้อง <span style="color:var(--red-500)">*</span></label>
-    <input class="fi" id="rf-location" type="text" placeholder="เช่น ห้อง 301, ห้องน้ำชั้น 1, ทางเดินหน้าอาคาร">
+    <label class="fl">จุดที่พบปัญหา (ระบุเพิ่มเติม)</label>
+    <input class="fi" id="rf-location" type="text" placeholder="เช่น มุมซ้ายประตูทางเข้า, เคาน์เตอร์ที่ 3">
   </div>
   <div class="fg">
     <label class="fl">รายละเอียดปัญหา <span style="color:var(--red-500)">*</span></label>
-    <textarea class="ft" id="rf-detail" placeholder="อธิบายปัญหาที่พบอย่างละเอียด เช่น อาการ ความถี่ที่เกิดขึ้น..."></textarea>
+    <textarea class="ft" id="rf-detail" placeholder="อธิบายปัญหาที่พบ เช่น อาการ ความถี่ที่เกิดขึ้น..."></textarea>
   </div>
   <div class="fg">
     <label class="fl">ระดับความเร่งด่วน</label>
