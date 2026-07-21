@@ -1038,7 +1038,9 @@ async function buildStock(){
   showPage('pg-stock');
   // โหลด Firebase ก่อนแสดงทุกหน้า
   await fbLoadItems();
+  await fbLoadWHHistory();
   fbStartListen();
+  fbListenWHHistory();
   const role=u.role,tabs=[];
   const isAdmin=role==='admin';
   const isManager=role==='manager';
@@ -1846,7 +1848,7 @@ function cwUpdateSummary(){
 function cwSetCat(el,cat){document.querySelectorAll('.cw-cat').forEach(c=>c.classList.remove('on'));el.classList.add('on');cwCat=cat;cwRenderGrid();}
 function cwFilter(){cwRenderGrid();}
 function cwClear(){if(!Object.keys(cwCart).length)return;if(!confirm('ล้างตะกร้าทั้งหมด?'))return;cwCart={};cwRenderGrid();cwRenderCart();}
-function cwSubmit(){
+async function cwSubmit(){
   const ids=Object.keys(cwCart);if(!ids.length)return;
   let err=false;
   ids.forEach(k=>{const c=cwCart[k],ow=document.getElementById('cwo-'+k);if(c.qty>c.item.qty){if(ow)ow.classList.add('show');err=true;}else{if(ow)ow.classList.remove('show');}});
@@ -1854,28 +1856,75 @@ function cwSubmit(){
   const now=new Date();
   const ts=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
   const note=document.getElementById('cw-note')?.value||'';
-  const newId='WD-'+(String(WH_HISTORY.length+1).padStart(3,'0'));
-  WH_HISTORY.unshift({
-    id:newId,ts,note,by:CU.uid||CU.email,byName:CU.name,
+  const entry={
+    ts,note,
+    by:CU.uid||CU.email,byName:CU.name,
     items:ids.map(k=>({
       name:cwCart[k].item.name,qty:cwCart[k].qty,
       unit:cwCart[k].item.unit,reason:cwCart[k].reason,
       itemKey:k
     })),
-    status:'pending',approvedBy:null
-  });
+    status:'pending',approvedBy:null,checkedItems:{}
+  };
+  try{
+    // push ลง Firebase
+    const res=await fbPush('wh_history',entry);
+    entry.id=res.name;
+    entry.fbKey=res.name;
+    WH_HISTORY.unshift(entry);
+    fbPulse();
+  }catch(e){
+    // fallback: ใช้ memory ถ้า Firebase ไม่ได้
+    entry.id='WD-'+(String(WH_HISTORY.length+1).padStart(3,'0'));
+    WH_HISTORY.unshift(entry);
+    console.warn('cwSubmit FB error:',e.message);
+  }
   const n=ids.length;cwCart={};cwRenderGrid();cwRenderCart();
-  if(document.getElementById('cw-myhist'))renderWithdrawHistory(CU.email,'cw-myhist');
+  renderWithdrawHistory(CU.uid||CU.email,'cw-myhist');
   showToast(`📤 ส่งคำขอเบิก ${n} รายการแล้ว — รอหัวหน้าอนุมัติ`);
 }
 
 // ════════════════════════════════════════
-// SHARED STATE — Withdraw History
+// SHARED STATE — Withdraw History (Firebase)
 // ════════════════════════════════════════
-const WH_HISTORY = [
-  {id:'WD-001',ts:'08:15',by:'kitchen1@restaurant.com',byName:'สมศรี วิชิต',note:'สำหรับเมนูเช้า',items:[{name:'น้ำมันพืช',qty:3,unit:'ลิตร',reason:'นำไปปรุงอาหาร'},{name:'ซีอิ๊วขาว',qty:1,unit:'ลิตร',reason:'นำไปปรุงอาหาร'}],status:'approved',approvedBy:'สุรีย์ จัดการ'},
-  {id:'WD-002',ts:'09:32',by:'kitchen2@restaurant.com',byName:'อนุชา รักงาน',note:'',items:[{name:'เนื้อหมูสับ',qty:3,unit:'กก.',reason:'นำไปปรุงอาหาร'},{name:'แป้งสาลี',qty:2,unit:'กก.',reason:'นำไปปรุงอาหาร'},{name:'กระเทียม',qty:0.5,unit:'กก.',reason:'นำไปปรุงอาหาร'}],status:'pending',approvedBy:null},
-];
+let WH_HISTORY = [];
+
+async function fbLoadWHHistory(){
+  try{
+    const raw=await fbGet('wh_history');
+    if(raw&&typeof raw==='object'){
+      WH_HISTORY=Object.entries(raw)
+        .map(([k,v])=>({...v,id:v.id||k,fbKey:k,
+          items:Array.isArray(v.items)?v.items:Object.values(v.items||{}),
+          checkedItems:v.checkedItems||{}
+        }))
+        .sort((a,b)=>(b.ts||'').localeCompare(a.ts||''));
+    }
+  }catch(e){console.warn('fbLoadWHHistory:',e.message);}
+}
+
+function fbListenWHHistory(){
+  const es=new EventSource(`${FB_DB}/wh_history.json`);
+  es.addEventListener('put',async e=>{
+    try{
+      const d=JSON.parse(e.data);
+      if(d.data&&typeof d.data==='object'){
+        WH_HISTORY=Object.entries(d.data)
+          .map(([k,v])=>({...v,id:v.id||k,fbKey:k,
+            items:Array.isArray(v.items)?v.items:Object.values(v.items||{}),
+            checkedItems:v.checkedItems||{}
+          }))
+          .sort((a,b)=>(b.ts||'').localeCompare(a.ts||''));
+        // refresh panels ที่กำลังแสดงอยู่
+        if(document.getElementById('mgr-approve-list'))renderManagerApprove('mgr-approve-list');
+        if(document.getElementById('admin-wh-list'))renderAllWithdrawHistory('admin-wh-list');
+        if(document.getElementById('cw-myhist')&&CU)renderWithdrawHistory(CU.uid||CU.email,'cw-myhist');
+        fbPulse();
+      }
+    }catch(_){}
+  });
+  es.onerror=()=>{es.close();setTimeout(fbListenWHHistory,6000);};
+}
 
 function statusBadge(s){
   const m={
@@ -1978,37 +2027,43 @@ function showRejectUI(id){
 function cancelRejectUI(id){
   document.getElementById('rj-wrap-'+id)?.classList.remove('show');
 }
-function confirmReject(id){
+async function confirmReject(id){
   const reason=document.getElementById('rj-inp-'+id)?.value||'';
-  const h=WH_HISTORY.find(x=>x.id===id);if(!h)return;
+  const h=WH_HISTORY.find(x=>x.id===id||x.fbKey===id);if(!h)return;
   h.status='rejected';h.approvedBy=CU.name;h.rejectReason=reason;
-  refreshApprovalPanels();
-  showToast(`✗ ปฏิเสธ ${id} แล้ว`);
+  try{await fbPatch(`wh_history/${h.fbKey||h.id}`,{status:'rejected',approvedBy:CU.name,rejectReason:reason});fbPulse();}catch(e){console.warn(e);}
+  refreshApprovalPanels();showToast(`✗ ปฏิเสธ ${id} แล้ว`);
 }
 
-function approveWithdraw(id){
-  const h=WH_HISTORY.find(x=>x.id===id);if(!h)return;
-  h.items.forEach(it=>{const idx=CW_ITEMS.findIndex(x=>x.id===it.itemId);if(idx>=0)CW_ITEMS[idx].qty=Math.max(0,CW_ITEMS[idx].qty-it.qty);});
+async function approveWithdraw(id){
+  const h=WH_HISTORY.find(x=>x.id===id||x.fbKey===id);if(!h)return;
+  // หักสต็อกใน SV_ITEMS + Firebase
+  for(const it of h.items){
+    const idx=SV_ITEMS.findIndex(x=>(x.fbKey||x.id)==it.itemKey||(x.fbKey||x.id)==it.itemId);
+    if(idx>=0){
+      SV_ITEMS[idx].qty=Math.max(0,SV_ITEMS[idx].qty-it.qty);
+      try{await fbPatch(`sv_items/${SV_ITEMS[idx].fbKey||SV_ITEMS[idx].id}`,{qty:SV_ITEMS[idx].qty});}catch(e){console.warn(e);}
+    }
+  }
   h.status='approved';h.approvedBy=CU.name;h.checkedItems={};
-  refreshApprovalPanels();
-  showToast(`✅ อนุมัติ ${id} — ส่งให้ Admin จัดของแล้ว`);
+  try{await fbPatch(`wh_history/${h.fbKey||h.id}`,{status:'approved',approvedBy:CU.name});fbPulse();}catch(e){console.warn(e);}
+  refreshApprovalPanels();showToast(`✅ อนุมัติ ${id} — ส่งให้ Admin จัดของแล้ว`);
 }
 
-function cancelWithdraw(id){
-  const h=WH_HISTORY.find(x=>x.id===id);if(!h)return;
+async function cancelWithdraw(id){
+  const h=WH_HISTORY.find(x=>x.id===id||x.fbKey===id);if(!h)return;
   if(!confirm(`ยืนยันยกเลิกรายการ ${id}?`))return;
   h.status='cancelled';
-  refreshApprovalPanels();
-  showToast(`ยกเลิกรายการ ${id} แล้ว`);
+  try{await fbPatch(`wh_history/${h.fbKey||h.id}`,{status:'cancelled'});fbPulse();}catch(e){console.warn(e);}
+  refreshApprovalPanels();showToast(`ยกเลิก ${id} แล้ว`);
 }
 
 function toggleFulfillItem(wdId,idx){
-  const h=WH_HISTORY.find(x=>x.id===wdId);if(!h)return;
+  const h=WH_HISTORY.find(x=>x.id===wdId||x.fbKey===wdId);if(!h)return;
   if(!h.checkedItems)h.checkedItems={};
   h.checkedItems[idx]=!h.checkedItems[idx];
   const box=document.getElementById(`fc-cb-${wdId}-${idx}`);
   if(box)box.classList.toggle('checked',!!h.checkedItems[idx]);
-  // update fulfill button state
   const allChecked=h.items.every((_,i)=>h.checkedItems[i]);
   const btn=document.getElementById(`fc-btn-${wdId}`);
   if(btn){btn.disabled=!allChecked;if(allChecked)btn.textContent='📦 ยืนยันจัดของเสร็จ';}
@@ -2016,11 +2071,12 @@ function toggleFulfillItem(wdId,idx){
   if(prog){const c=Object.values(h.checkedItems).filter(Boolean).length;prog.textContent=`(${c}/${h.items.length})`;}
 }
 
-function fulfillWithdraw(id){
-  const h=WH_HISTORY.find(x=>x.id===id);if(!h)return;
-  h.status='fulfilled';h.fulfilledBy=CU.name;h.fulfilledAt=new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' น.';
-  renderAllWithdrawHistory('admin-wh-list');
-  showToast(`📦 จัดของ ${id} เสร็จแล้ว`);
+async function fulfillWithdraw(id){
+  const h=WH_HISTORY.find(x=>x.id===id||x.fbKey===id);if(!h)return;
+  const now=new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' น.';
+  h.status='fulfilled';h.fulfilledBy=CU.name;h.fulfilledAt=now;
+  try{await fbPatch(`wh_history/${h.fbKey||h.id}`,{status:'fulfilled',fulfilledBy:CU.name,fulfilledAt:now});fbPulse();}catch(e){console.warn(e);}
+  renderAllWithdrawHistory('admin-wh-list');showToast(`📦 จัดของ ${id} เสร็จแล้ว`);
 }
 
 let awhFilter='approved';
@@ -2033,7 +2089,7 @@ function awhSetFilter(el,f){
 function refreshApprovalPanels(){
   if(document.getElementById('mgr-approve-list'))renderManagerApprove('mgr-approve-list');
   if(document.getElementById('admin-wh-list'))renderAllWithdrawHistory('admin-wh-list');
-  if(document.getElementById('cw-myhist')&&CU)renderWithdrawHistory(CU.email,'cw-myhist');
+  if(document.getElementById('cw-myhist')&&CU)renderWithdrawHistory(CU.uid||CU.email,'cw-myhist');
 }
 
 function renderAllWithdrawHistory(elId){
