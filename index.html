@@ -2380,8 +2380,9 @@ function getStaffOptions(selectedName=''){
   return `<option value="">-- เลือกช่าง --</option>`+
     staffUsers.map(u=>`<option ${selectedName===u.name?'selected':''}>${u.name}</option>`).join('');
 }
+
+function repairCard(r,showActions,role){
   const actions=showActions&&role==='staff'&&r.status!=='done'?`
-    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bdr-light)">
       <div class="fg-2" style="margin-bottom:8px">
         <div>
           <label class="fl">อัปเดตสถานะ</label>
