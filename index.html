@@ -2374,7 +2374,12 @@ function repairStatusBadge(s,urgent){
   return urgBadge+(m[s]||'');
 }
 
-function repairCard(r,showActions,role){
+function getStaffOptions(selectedName=''){
+  const staffUsers=Object.values(USERS).filter(u=>u.role==='staff'||u.rlabel?.includes('ช่าง'));
+  if(!staffUsers.length)return `<option value="">-- ยังไม่มีช่างในระบบ --</option>`;
+  return `<option value="">-- เลือกช่าง --</option>`+
+    staffUsers.map(u=>`<option ${selectedName===u.name?'selected':''}>${u.name}</option>`).join('');
+}
   const actions=showActions&&role==='staff'&&r.status!=='done'?`
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bdr-light)">
       <div class="fg-2" style="margin-bottom:8px">
@@ -2388,9 +2393,7 @@ function repairCard(r,showActions,role){
         <div>
           <label class="fl">มอบหมายให้ช่าง</label>
           <select class="fs" id="tech-${r.id}" style="font-size:12px">
-            <option value="">-- เลือกช่าง --</option>
-            <option ${r.assignedTo==='วิชัย ช่างดี'?'selected':''}>วิชัย ช่างดี</option>
-            <option ${r.assignedTo==='อนันต์ แก้วมณี'?'selected':''}>อนันต์ แก้วมณี</option>
+            ${getStaffOptions(r.assignedTo)}
           </select>
         </div>
       </div>
@@ -2408,9 +2411,7 @@ function repairCard(r,showActions,role){
         <div>
           <label class="fl">มอบหมายให้</label>
           <select class="fs" id="tech-${r.id}" style="font-size:12px">
-            <option value="">-- เลือกช่าง --</option>
-            <option>วิชัย ช่างดี</option>
-            <option>อนันต์ แก้วมณี</option>
+            ${getStaffOptions(r.assignedTo)}
           </select>
         </div>
         <div style="display:flex;align-items:flex-end">
