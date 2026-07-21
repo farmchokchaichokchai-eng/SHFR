@@ -2361,12 +2361,36 @@ function roleColor(role){return{admin:'#7C3AED',reporter:'#0891B2',staff:'#0D948
 // ════════════════════════════════════════
 // SHARED STATE — Repair Requests
 // ════════════════════════════════════════
-const REPAIR_REQUESTS = [
-  {id:'REP-0148',ts:'14 ก.ค. 68 09:12 น.',type:'ไฟฟ้า',building:'อาคาร 3',location:'ห้อง 301',detail:'ปลั๊กไฟช็อต มีกลิ่นไหม้ ใช้งานไม่ได้ 3 จุด',urgent:true,by:'reporter1@org.go.th',byName:'มาลี สุขใจ',status:'inprogress',assignedTo:'วิชัย ช่างดี',techNote:'กำลังเปลี่ยนปลั๊กใหม่',doneTs:null},
-  {id:'REP-0147',ts:'13 ก.ค. 68 14:30 น.',type:'IT / คอมพิวเตอร์',building:'อาคาร 1',location:'ห้องประชุม',detail:'โปรเจกเตอร์ไม่ติด หลอดไฟอาจขาด',urgent:false,by:'reporter2@org.go.th',byName:'ประสิทธิ์ ชัยดี',status:'pending',assignedTo:null,techNote:'',doneTs:null},
-  {id:'REP-0146',ts:'12 ก.ค. 68 10:05 น.',type:'ประปา',building:'อาคาร 2',location:'ห้องน้ำชายชั้น 1',detail:'ท่อน้ำรั่วซึม น้ำขังพื้น',urgent:false,by:'reporter1@org.go.th',byName:'มาลี สุขใจ',status:'done',assignedTo:'อนันต์ แก้วมณี',techNote:'เปลี่ยนข้อต่อท่อแล้ว',doneTs:'13 ก.ค. 68 11:20 น.'},
-  {id:'REP-0145',ts:'10 ก.ค. 68 08:45 น.',type:'ไฟฟ้า',building:'อาคาร 1',location:'ห้อง 205',detail:'แอร์ไม่เย็น เสียงดัง',urgent:false,by:'reporter2@org.go.th',byName:'ประสิทธิ์ ชัยดี',status:'done',assignedTo:'วิชัย ช่างดี',techNote:'ล้างแอร์และเติมน้ำยา',doneTs:'11 ก.ค. 68 14:00 น.'},
-];
+let REPAIR_REQUESTS = [];
+
+async function fbLoadRepairRequests(){
+  try{
+    const raw=await fbGet('repair_requests');
+    if(raw&&typeof raw==='object'&&Object.keys(raw).length){
+      REPAIR_REQUESTS=Object.entries(raw)
+        .map(([k,v])=>({...v,fbKey:k}))
+        .sort((a,b)=>(b.ts||'').localeCompare(a.ts||''));
+    }
+  }catch(e){console.warn('fbLoadRepair:',e.message);}
+}
+
+function fbListenRepairRequests(){
+  const es=new EventSource(`${FB_DB}/repair_requests.json`);
+  es.addEventListener('put',e=>{
+    try{
+      const d=JSON.parse(e.data);
+      if(d.data&&typeof d.data==='object'){
+        REPAIR_REQUESTS=Object.entries(d.data)
+          .map(([k,v])=>({...v,fbKey:k}))
+          .sort((a,b)=>(b.ts||'').localeCompare(a.ts||''));
+        refreshRepairPanels();fbPulse();
+      }else if(d.data===null){
+        REPAIR_REQUESTS=[];refreshRepairPanels();
+      }
+    }catch(_){}
+  });
+  es.onerror=()=>{es.close();setTimeout(fbListenRepairRequests,6000);};
+}
 
 function repairStatusBadge(s,urgent){
   const m={pending:'<span class="badge b-wait">⏳ รอรับงาน</span>',inprogress:'<span class="badge b-prog">🔧 ดำเนินการ</span>',done:'<span class="badge b-done">✓ เสร็จแล้ว</span>',cancelled:'<span class="badge" style="background:var(--slate-100);color:var(--slate-600);border:1px solid var(--slate-200)">ยกเลิก</span>'};
