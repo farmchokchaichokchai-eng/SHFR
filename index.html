@@ -798,27 +798,32 @@ function renderTabs(tabsId,contId,tabs,cls){
 // ════════════════════════════════════════
 // REPAIR SYSTEM
 // ════════════════════════════════════════
-function buildRepair(){
+async function buildRepair(){
   const u=CU;
   setAv('r-av',u.color,u.init);setText('r-uname',shortName(u.name));
   const rb=document.getElementById('r-rbadge');rb.textContent=u.rlabel;
   rb.className='rbadge '+(u.role==='admin'?'rb-v':'rb-b');
-  const role=u.role,tabs=[];
-  // ใช้ role เพื่อกำหนด tab แต่ถ้า role ไม่ match ให้ fallback เป็น reporter
+  showPage('pg-repair');
+  const role=u.role;
   const isAdmin=role==='admin';
   const isStaff=role==='staff';
   const isExec=role==='executive';
-  // user ที่มี sys=['repair','stock'] แต่ role อื่น → ให้เห็นแบบ reporter
   const isReporterLike=!isAdmin&&!isStaff&&!isExec;
-  if(isAdmin||isExec)      tabs.push({id:'rd',icon:'📊',label:'Dashboard',html:tplRepairDash()});
+  const tabs=[];
+  if(isAdmin||isExec)       tabs.push({id:'rd',icon:'📊',label:'Dashboard',html:tplRepairDash()});
   if(isAdmin||isReporterLike) tabs.push({id:'rf',icon:'📝',label:'แจ้งซ่อม',html:tplRepairForm(),onshow:()=>clearRepairForm()});
   if(isAdmin||isReporterLike) tabs.push({id:'rm',icon:'📋',label:'งานของฉัน',html:tplMyJobs(),onshow:()=>renderMyJobs('my-jobs-list')});
-  if(isAdmin||isStaff)     tabs.push({id:'ra',icon:'🛠',label:'งานที่ได้รับ',html:tplAssigned(),onshow:()=>renderAssigned('assigned-list')});
-  if(isAdmin)              tabs.push({id:'rall',icon:'📁',label:'งานทั้งหมด',html:tplAllJobs(),onshow:()=>renderAllJobs('all-jobs-list')});
-  if(isAdmin)              tabs.push({id:'ru',icon:'👥',label:'จัดการผู้ใช้',html:tplUsers(),onshow:()=>renderUsersPanel()});
-  if(!tabs.length) tabs.push({id:'rf',icon:'📝',label:'แจ้งซ่อม',html:tplRepairForm(),onshow:()=>clearRepairForm()});
+  if(isAdmin||isStaff)      tabs.push({id:'ra',icon:'🛠',label:'งานที่ได้รับ',html:tplAssigned(),onshow:async()=>{await fbLoadRepairRequests();renderAssigned('assigned-list');}});
+  if(isAdmin)               tabs.push({id:'rall',icon:'📁',label:'งานทั้งหมด',html:tplAllJobs(),onshow:()=>renderAllJobs('all-jobs-list')});
+  if(isAdmin)               tabs.push({id:'ru',icon:'👥',label:'จัดการผู้ใช้',html:tplUsers(),onshow:()=>renderUsersPanel()});
+  if(!tabs.length)          tabs.push({id:'rf',icon:'📝',label:'แจ้งซ่อม',html:tplRepairForm(),onshow:()=>clearRepairForm()});
   renderTabs('r-tabs','r-content',tabs,'atb-b');
-  showPage('pg-repair');
+  // โหลด Firebase หลัง render tabs แล้ว refresh panels
+  await loadUsersFromFB();
+  await fbLoadRepairRequests();
+  fbListenRepairRequests();
+  // refresh หลัง Firebase โหลดเสร็จ
+  setTimeout(()=>refreshRepairPanels(), 100);
 }
 
 function tplRepairDash(){return `
@@ -918,49 +923,40 @@ function clearRepairForm(){
   const suc=document.getElementById('rf-success');if(suc)suc.style.display='none';
 }
 
-function submitRepair(){
+async function submitRepair(){
   const type=document.getElementById('rf-type')?.value;
   const building=document.getElementById('rf-building')?.value;
-  const location=document.getElementById('rf-location')?.value.trim();
+  const location=document.getElementById('rf-location')?.value.trim()||'';
   const detail=document.getElementById('rf-detail')?.value.trim();
-  const urgent=document.querySelector('.urg-opt.sel-u')!==null;
   const errEl=document.getElementById('rf-err');
-  // validate
   const missing=[];
   if(!type)missing.push('ประเภทงาน');
-  if(!building)missing.push('อาคาร');
-  if(!location)missing.push('สถานที่ / ห้อง');
+  if(!building)missing.push('ห้อง / สถานที่');
   if(!detail)missing.push('รายละเอียดปัญหา');
-  if(missing.length){
-    errEl.textContent='⚠ กรุณากรอกข้อมูล: '+missing.join(', ');
-    errEl.style.display='block';
-    errEl.scrollIntoView({behavior:'smooth',block:'nearest'});
-    return;
-  }
+  if(missing.length){errEl.textContent='⚠ กรุณากรอกข้อมูล: '+missing.join(', ');errEl.style.display='block';return;}
   errEl.style.display='none';
-  // save
   const now=new Date();
   const ts=now.toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'2-digit'})+' '+now.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' น.';
-  const newId='REP-'+(String(REPAIR_REQUESTS.length+1).padStart(4,'0'));
-  REPAIR_REQUESTS.unshift({
-    id:newId,ts,type,building,location,detail,
+  const entry={
+    ts,type,building,location,detail,
     urgent:!!document.querySelector('.urg-opt.sel-u'),
-    by:CU.email,byName:CU.name,
+    by:CU.uid||CU.email,byName:CU.name,
     status:'pending',assignedTo:null,techNote:'',doneTs:null
-  });
-  // show success
+  };
+  try{
+    const res=await fbPush('repair_requests',entry);
+    entry.fbKey=res.name;entry.id=res.name;
+    REPAIR_REQUESTS.unshift(entry);fbPulse();
+  }catch(e){
+    entry.id='REP-'+(String(REPAIR_REQUESTS.length+1).padStart(4,'0'));
+    REPAIR_REQUESTS.unshift(entry);
+    console.warn('submitRepair FB:',e.message);
+  }
   const suc=document.getElementById('rf-success');
   const det=document.getElementById('rf-success-detail');
-  if(suc&&det){
-    det.textContent=`${newId} · ${type} · ${building} ${location} · ${ts}`;
-    suc.style.display='block';
-  }
-  clearRepairForm();
-  showToast(`📤 ส่งคำขอ ${newId} แล้ว`);
-  // refresh panels
-  if(document.getElementById('my-jobs-list')&&CU)renderMyJobs('my-jobs-list');
-  if(document.getElementById('all-jobs-list'))renderAllJobs('all-jobs-list');
-  if(document.getElementById('assigned-list'))renderAssigned('assigned-list');
+  if(suc&&det){det.textContent=`${entry.id} · ${type} · ${building}${location?' · '+location:''} · ${ts}`;suc.style.display='block';}
+  clearRepairForm();showToast(`📤 ส่งคำขอ ${entry.id} แล้ว`);
+  refreshRepairPanels();
 }
 function tplMyJobs(){return `
 <div class="sec-hd">งานที่ฉันแจ้ง</div>
@@ -986,7 +982,10 @@ function tplAssigned(){return `
 
 function tplAllJobs(){return `
 <input type="hidden" id="alljobs-filter" value="all">
-<div class="sec-hd">งานทั้งหมดในระบบ</div>
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+  <div class="sec-hd" style="margin:0">งานทั้งหมดในระบบ</div>
+  <button class="btn btn-secondary" style="padding:6px 14px;font-size:11px" onclick="fixAssignedNames()">🔧 ซิงค์ชื่อช่าง</button>
+</div>
 <div class="chip-row">
   <div class="chip on-b" onclick="filterAllJobs(this,'all')">ทั้งหมด</div>
   <div class="chip" onclick="filterAllJobs(this,'pending')">⏳ รอรับ</div>
@@ -2401,33 +2400,40 @@ function repairStatusBadge(s,urgent){
 function getStaffOptions(selectedName=''){
   const staffUsers=Object.values(USERS).filter(u=>u.role==='staff'||u.rlabel?.includes('ช่าง'));
   if(!staffUsers.length)return `<option value="">-- ยังไม่มีช่างในระบบ --</option>`;
+  const selNorm=normName(selectedName);
   return `<option value="">-- เลือกช่าง --</option>`+
-    staffUsers.map(u=>`<option ${selectedName===u.name?'selected':''}>${u.name}</option>`).join('');
+    staffUsers.map(u=>{
+      const uName=normName(u.name);
+      return `<option value="${uName}" ${selNorm===uName?'selected':''}>${u.name}</option>`;
+    }).join('');
 }
 
 function repairCard(r,showActions,role){
+  const rid=r.fbKey||r.id||'';  // key ที่ใช้ระบุ record
+  const displayId=r.id||r.fbKey||'—';
   const actions=showActions&&role==='staff'&&r.status!=='done'?`
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bdr-light)">
       <div class="fg-2" style="margin-bottom:8px">
         <div>
           <label class="fl">อัปเดตสถานะ</label>
-          <select class="fs" id="st-${r.id}" style="font-size:12px">
+          <select class="fs" id="st-${rid}" style="font-size:12px">
             <option value="inprogress" ${r.status==='inprogress'?'selected':''}>🔧 ดำเนินการ</option>
             <option value="done" ${r.status==='done'?'selected':''}>✓ เสร็จสิ้น</option>
           </select>
         </div>
         <div>
           <label class="fl">มอบหมายให้ช่าง</label>
-          <select class="fs" id="tech-${r.id}" style="font-size:12px">
+          <select class="fs" id="tech-${rid}" style="font-size:12px">
             ${getStaffOptions(r.assignedTo)}
           </select>
         </div>
       </div>
       <div class="fg" style="margin-bottom:8px">
         <label class="fl">หมายเหตุช่าง</label>
-        <textarea class="ft" id="note-${r.id}" placeholder="รายละเอียดการซ่อม..." style="min-height:52px">${r.techNote}</textarea>
+        <textarea class="ft" id="note-${rid}" placeholder="รายละเอียดการซ่อม..." style="min-height:52px">${r.techNote||''}</textarea>
       </div>
       <div class="btn-row">
-        <button class="btn btn-primary-b" style="padding:9px" onclick="updateRepair('${r.id}')">💾 บันทึก</button>
+        <button class="btn btn-primary-b" style="padding:9px" onclick="updateRepair('${rid}')">💾 บันทึก</button>
       </div>
     </div>`
   :showActions&&role==='admin'&&r.status==='pending'?`
@@ -2435,22 +2441,22 @@ function repairCard(r,showActions,role){
       <div class="fg-2" style="margin-bottom:8px">
         <div>
           <label class="fl">มอบหมายให้</label>
-          <select class="fs" id="tech-${r.id}" style="font-size:12px">
+          <select class="fs" id="tech-${rid}" style="font-size:12px">
             ${getStaffOptions(r.assignedTo)}
           </select>
         </div>
         <div style="display:flex;align-items:flex-end">
-          <button class="btn btn-primary-b" style="padding:9px;width:100%" onclick="assignRepair('${r.id}')">📋 มอบหมายงาน</button>
+          <button class="btn btn-primary-b" style="padding:9px;width:100%" onclick="assignRepair('${rid}')">📋 มอบหมายงาน</button>
         </div>
       </div>
     </div>`:'';
-  return `<div class="job-card" id="rcard-${r.id}">
+  return `<div class="job-card" id="rcard-${rid}">
     <div class="jc-top">
       <div class="jc-info">
-        <div class="jc-id">${r.id} · ${r.ts}</div>
-        <div class="jc-name">${r.type} — ${r.location}</div>
-        <div class="jc-meta">${r.building}<div class="jc-meta-dot"></div>${r.byName}${r.assignedTo?`<div class="jc-meta-dot"></div>🔧 ${r.assignedTo}`:''}</div>
-        <div style="font-size:12px;color:var(--text-m);margin-top:4px">${r.detail}</div>
+        <div class="jc-id">${displayId} · ${r.ts||'—'}</div>
+        <div class="jc-name">${r.type||''} — ${r.location||r.building||''}</div>
+        <div class="jc-meta">${r.building||''}${r.byName?`<div class="jc-meta-dot"></div>${r.byName}`:''}${r.assignedTo?`<div class="jc-meta-dot"></div>🔧 ${r.assignedTo}`:''}</div>
+        <div style="font-size:12px;color:var(--text-m);margin-top:4px">${r.detail||''}</div>
         ${r.techNote?`<div style="font-size:11px;color:var(--text-m);margin-top:3px;font-style:italic">💬 ${r.techNote}</div>`:''}
         ${r.doneTs?`<div style="font-size:11px;color:var(--green-600);margin-top:3px">✓ เสร็จ ${r.doneTs}</div>`:''}
       </div>
@@ -2462,15 +2468,37 @@ function repairCard(r,showActions,role){
 
 function renderMyJobs(elId){
   const el=document.getElementById(elId);if(!el)return;
-  const mine=REPAIR_REQUESTS.filter(r=>r.by===CU.email);
+  const myId=CU.uid||CU.email;
+  const mine=REPAIR_REQUESTS.filter(r=>r.by===myId);
   if(!mine.length){el.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-txt">ยังไม่มีรายการแจ้งซ่อม</div><div class="empty-sub">กดแท็บ "แจ้งซ่อม" เพื่อส่งคำขอใหม่</div></div>`;return;}
   el.innerHTML=mine.map(r=>repairCard(r,false,'reporter')).join('');
 }
 
+function normName(s){
+  return (s||'').normalize('NFC').replace(/[\u00A0\u200B\u200C\u200D\uFEFF\s]+/g,' ').trim();
+}
+
+function fuzzyMatch(a,b){
+  const na=normName(a).replace(/\s/g,'');
+  const nb=normName(b).replace(/\s/g,'');
+  return na===nb || normName(a)===normName(b);
+}
+
 function renderAssigned(elId){
   const el=document.getElementById(elId);if(!el)return;
-  const mine=REPAIR_REQUESTS.filter(r=>r.assignedTo&&r.assignedTo.includes(CU.name.split(' ')[0]));
-  if(!mine.length){el.innerHTML=`<div class="empty-state"><div class="empty-icon">🛠</div><div class="empty-txt">ยังไม่มีงานที่ได้รับมอบหมาย</div></div>`;return;}
+  const myName=normName(CU.name);
+  const mine=REPAIR_REQUESTS.filter(r=>{
+    if(!r.assignedTo)return false;
+    return fuzzyMatch(r.assignedTo, myName);
+  });
+  if(!mine.length){
+    el.innerHTML=`<div style="text-align:center;padding:48px 24px">
+      <div style="font-size:40px;margin-bottom:12px">🛠</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:6px">ยังไม่มีงานที่ได้รับมอบหมาย</div>
+      <div style="font-size:12px;color:var(--text-m)">เมื่อ Admin มอบหมายงานให้ จะแสดงที่นี่</div>
+    </div>`;
+    return;
+  }
   el.innerHTML=mine.map(r=>repairCard(r,true,'staff')).join('');
 }
 
@@ -2482,8 +2510,8 @@ function renderAllJobs(elId){
   el.innerHTML=list.map(r=>repairCard(r,true,'admin')).join('');
 }
 
-function updateRepair(id){
-  const r=REPAIR_REQUESTS.find(x=>x.id===id);if(!r)return;
+async function updateRepair(id){
+  const r=REPAIR_REQUESTS.find(x=>x.id===id||x.fbKey===id);if(!r)return;
   const st=document.getElementById('st-'+id)?.value;
   const tech=document.getElementById('tech-'+id)?.value;
   const note=document.getElementById('note-'+id)?.value||'';
@@ -2491,17 +2519,49 @@ function updateRepair(id){
   if(tech)r.assignedTo=tech;
   r.techNote=note;
   if(st==='done'){r.doneTs=new Date().toLocaleDateString('th-TH',{day:'2-digit',month:'short',year:'2-digit'})+' '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' น.';}
+  try{
+    const fbKey=r.fbKey||r.id;
+    await fbPatch(`repair_requests/${fbKey}`,{status:r.status,assignedTo:r.assignedTo,techNote:r.techNote,doneTs:r.doneTs||null});
+    fbPulse();
+  }catch(e){console.warn('updateRepair FB:',e.message);}
   refreshRepairPanels();
   showToast(`💾 บันทึก ${id} แล้ว`);
 }
 
-function assignRepair(id){
-  const r=REPAIR_REQUESTS.find(x=>x.id===id);if(!r)return;
-  const tech=document.getElementById('tech-'+id)?.value;
-  if(!tech){showToast('⚠ กรุณาเลือกช่าง');return;}
+async function assignRepair(id){
+  const r=REPAIR_REQUESTS.find(x=>x.id===id||x.fbKey===id);if(!r)return;
+  const rawTech=document.getElementById('tech-'+id)?.value;
+  if(!rawTech){showToast('⚠ กรุณาเลือกช่าง');return;}
+  const tech=normName(rawTech); // normalize ก่อน save
   r.assignedTo=tech;r.status='inprogress';
+  try{
+    const fbKey=r.fbKey||r.id;
+    await fbPatch(`repair_requests/${fbKey}`,{assignedTo:tech,status:'inprogress'});
+    fbPulse();
+  }catch(e){console.warn('assignRepair FB:',e.message);}
   refreshRepairPanels();
   showToast(`📋 มอบหมาย ${id} ให้ ${tech} แล้ว`);
+}
+
+// Admin utility: normalize assignedTo names in Firebase
+async function fixAssignedNames(){
+  const staffNames=Object.values(USERS)
+    .filter(u=>u.role==='staff'||u.rlabel?.includes('ช่าง'))
+    .map(u=>({norm:normName(u.name).replace(/\s/g,''),clean:normName(u.name)}));
+  let fixed=0;
+  for(const r of REPAIR_REQUESTS){
+    if(!r.assignedTo)continue;
+    const rawStripped=normName(r.assignedTo).replace(/\s/g,'');
+    const match=staffNames.find(s=>s.norm===rawStripped);
+    if(match&&normName(r.assignedTo)!==match.clean){
+      try{
+        await fbPatch(`repair_requests/${r.fbKey||r.id}`,{assignedTo:match.clean});
+        r.assignedTo=match.clean;fixed++;
+      }catch(e){console.warn(e);}
+    }
+  }
+  await fbLoadRepairRequests();refreshRepairPanels();
+  showToast(fixed>0?`✓ แก้ไขชื่อช่าง ${fixed} รายการแล้ว`:'ชื่อทุกรายการถูกต้องแล้ว');
 }
 
 function refreshRepairPanels(){
